@@ -17,7 +17,7 @@ import os
 
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
-save_dir = "./alexnet.pth"
+save_dir = "./savedModels"
 label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
 
 class CXRDataset(Dataset):
@@ -201,8 +201,11 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer,step_size=7, gamma=0.1)
 
-    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 10)
-    torch.save(model.state_dict(), save_dir)
+    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 20000)
+
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    torch.save(model.state_dict(), os.path.join(save_dir, "alexnet.pth"))
     plt.plot(lossList, label='loss', color='blue')
     plt.show()
     plt.plot(aucList['train'], label='auc_train', color='red')
