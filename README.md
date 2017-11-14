@@ -6,13 +6,13 @@ Deep learning practice on CXR dataset.
 ### Setup
 1. Setup [pytorch](http://pytorch.org/) enviroment.
 2. Download the dataset [here](https://nihcc.app.box.com/v/ChestXray-NIHCC).
-3. Extract the images in to directory `./images`.
+3. Extract the images into directory `./images`.
 
-To generate train, validation, and test data
+To generate train, validation, and test data.
 
     python label_gen.py
  
-This will generate 3 csv files: `Train_Label.csv`, `Val_Label.csv`, and `Test_Label.csv`
+This will generate 3 csv files: `Train_Label.csv`, `Val_Label.csv`, and `Test_Label.csv`.
 
 
 ----------------------------------------------
