@@ -14,11 +14,19 @@ from torch.utils.data import Dataset, DataLoader
 import torch.utils.model_zoo as model_zoo
 import time
 import os
+import logging
+
 
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
 save_dir = "./savedModels"
+log_dir = "./log"
+statistic_dir = "./statistic"
 label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
+
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+logging.basicConfig(filename=os.path.join(log_dir, "alxnetlog.log"), filemode='w', level=logging.INFO, format='%(message)s')
 
 class CXRDataset(Dataset):
     """Face Landmarks dataset."""
@@ -57,6 +65,8 @@ def loadData(batch_size):
                   for x in ['train', 'val']}
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
     print('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
+    logging.info('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
+
     class_names = image_datasets['train'].classes
     return dataloders, dataset_sizes
 
@@ -69,10 +79,16 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
     best_auc = 0.0
     lossList = []
     aucList = {'train': [], 'val': []}
+    lastAUC = 0
+    earlyStopNum = 10
+    earlyStopCount = earlyStopNum
 
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
+        logging.info('Epoch {}/{}'.format(epoch, num_epochs - 1))
+        logging.info('-' * 10)
+
 
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
@@ -148,19 +164,36 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
 
             print('{} Loss: {:.4f} AUC: {:.4f}'.format(
                 phase, epoch_loss, epoch_auc))
+            logging.info('{} Loss: {:.4f} AUC: {:.4f}'.format(
+                phase, epoch_loss, epoch_auc))
+                 
 
             # deep copy the model
             if phase == 'val' and epoch_auc > best_auc:
                 best_auc = epoch_auc
                 best_model_wts = model.state_dict()
+        
+        #early stopping
+        if lastAUC >= epoch_auc:
+            earlyStopCount -= 1
+            if earlyStopCount == 0:
+                print('Early stoped at epoch {}'.format(epoch))
+                logging.info('Early stoped at epoch {}'.format(epoch))
+                break
+        else:
+            earlyStopCount = earlyStopNum
+
 
         print()
+        logging.info("")
 
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
     print('Best val AUC: {:4f}'.format(best_auc))
-
+    logging.info('Training complete in {:.0f}m {:.0f}s'.format(
+        time_elapsed // 60, time_elapsed % 60))
+    logging.info('Best val AUC: {:4f}'.format(best_auc))
     # load best model weights
     model.load_state_dict(best_model_wts)
     return model, lossList, aucList
@@ -201,14 +234,30 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer,step_size=7, gamma=0.1)
 
-    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 20000)
-
+    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 10)
+    
+    #save model
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     torch.save(model.state_dict(), os.path.join(save_dir, "alexnet.pth"))
+
+    #plot learning curve
+    if not os.path.exists(statistic_dir):
+        os.makedirs(statistic_dir)
+    fig = plt.figure()
     plt.plot(lossList, label='loss', color='blue')
-    plt.show()
+    plt.legend()
+    plt.suptitle("loss")
+    fig.savefig(os.path.join(statistic_dir, "alexnetloss.png"))
+    plt.clf()
     plt.plot(aucList['train'], label='auc_train', color='red')
     plt.plot(aucList['val'], label='auc_val', color='green')
+    plt.legend()
+    plt.suptitle("auc")
+    fig.savefig(os.path.join(statistic_dir, "alexnetauc.png"))
+    plt.clf()
+    plt.imshow(plt.imread(os.path.join(statistic_dir, "alexnetloss.png")))
+    plt.show()
+    plt.imshow(plt.imread(os.path.join(statistic_dir, "alexnetauc.png")))
     plt.show()
 
