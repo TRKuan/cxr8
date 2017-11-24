@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
 from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import pandas as pd
@@ -23,6 +23,12 @@ save_dir = "./savedModels"
 log_dir = "./log"
 statistic_dir = "./statistic"
 label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
+
+numtolabel = ['Atelectasis', 'Cardiomegaly', 'Effusion', 'Infiltration',
+       'Mass', 'Nodule', 'Pneumonia', 'Pneumothorax',
+       'Consolidation', 'Edema', 'Emphysema', 'Fibrosis',
+       'Pleural Thickening', 'Hernia'
+      ]
 
 class CXRDataset(Dataset):
     """Face Landmarks dataset."""
@@ -64,7 +70,7 @@ def loadData(batch_size):
     return dataloders, dataset_sizes
 
 def test_model(model):
-    batch_size = 1 
+    batch_size = 4 
     since = time.time()
     dataloders, dataset_sizes = loadData(batch_size)
     iterNum = int(80/batch_size)
@@ -73,6 +79,8 @@ def test_model(model):
     lossList = []
     aucList = {'train': [], 'val': []}
     lastAUC = 0
+    outputList = []
+    labelList = []
 
     for epoch in range(1):
 
@@ -96,39 +104,39 @@ def test_model(model):
                 
 
                 # forward
-                outputs, trans_out = model(inputs)
-                labels = labels.data.cpu().numpy()[0]
-                trans_out = trans_out.data.cpu().numpy()[0].transpose(1, 2, 0)
-                for layer in model.modules():
-                    if isinstance(layer, nn.Linear):
-                         pred_weight=layer.weight.data.cpu().numpy().transpose(1, 0)
-
-                heatmap = np.matmul(trans_out, pred_weight)
-                for i in range(14):
-                    if labels[i] == 1:
-                        image = heatmap.transpose(2, 0, 1)[i]
-                        image *= 255
-                        print(labels)
-                        plt.imshow(image)
-                        plt.show()
-
-                '''
+                outputs = model(inputs)
+                out_data = outputs.data
                 # statistics
-                running_loss += loss.data[0]
                 labels = labels.data.cpu().numpy()
                 out_data = out_data.cpu().numpy()
                 for i in range(out_data.shape[0]):
-                    try:
-                        running_auc += roc_auc_score(labels[i], out_data[i])
-                        totalAUCCount +=1
-                    except: pass
+                    outputList.append(out_data[i].tolist())
+                    labelList.append(labels[i].tolist())
 
-                epoch_loss = running_loss / dataset_sizes[phase]
-                epoch_auc = running_auc / totalAUCCount
-                if phase == 'train': lossList.append(epoch_loss)
-                aucList[phase].append(epoch_auc)
-                '''
-                 
+    fig = plt.figure()
+    plt.suptitle("roc curve")
+
+    for i in range(14):
+        o_list = []
+        l_list = []
+        for n in range(len(outputList)):
+            o_list.append(outputList[n][i])
+            l_list.append(labelList[n][i])
+        try:
+            auc = roc_auc_score(l_list, o_list)
+            roc = roc_curve(l_list, o_list)
+            print('{} auc:{:.4f}'.format(numtolabel[i], auc))
+            plt.plot(roc.tpr, roc.fpr, label=numtolabel[i])
+            plt.legend()
+
+
+        except: print('{} error'.format(i))
+    plt.legend()
+    plt.ylabel("tpr")
+    plt.xlabel("fpr")
+    plt.legend()
+    plt.show()
+
     return model, lossList, aucList
 
 class Model(nn.Module):
@@ -156,7 +164,7 @@ class Model(nn.Module):
         out = self.globalPool(out_trans)#246x1x1
         out = out.view(out.size(0), -1)#256
         out = self.prediction(out)#14
-        return out, out_trans
+        return out
 
 class Model_1(nn.Module):
     def __init__(self):
@@ -175,14 +183,14 @@ class Model_1(nn.Module):
         self.prediction = nn.Sequential(
             nn.Linear(256, 14)
         )
-
+    
     def forward(self, x):
         x = self.model_ft.features(x)#256x31x31
-        out_tran = self.transition(x)#256x16x16
-        x = self.globalPool(out_tran)#246x1x1
+        x = self.transition(x)#256x16x16
+        x = self.globalPool(x)#246x1x1
         x = x.view(x.size(0), -1)#256
         x = self.prediction(x)#14
-        return x, out_tran
+        return x
 
 
 if __name__ == '__main__':

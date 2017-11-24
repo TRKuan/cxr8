@@ -9,6 +9,7 @@ import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
 import matplotlib.pyplot as plt
+plt.switch_backend('agg')
 import cv2
 from torch.utils.data import Dataset, DataLoader
 import torch.utils.model_zoo as model_zoo
@@ -26,7 +27,7 @@ label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test
 
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
-logging.basicConfig(filename=os.path.join(log_dir, "alxnetlog.log"), filemode='w', level=logging.INFO, format='%(message)s')
+logging.basicConfig(filename=os.path.join(log_dir, "alxnetlog_2.log"), filemode='w', level=logging.INFO, format='%(message)s')
 
 class CXRDataset(Dataset):
     """Face Landmarks dataset."""
@@ -71,16 +72,16 @@ def loadData(batch_size):
     return dataloders, dataset_sizes
 
 def train_model(model, optimizer, scheduler, num_epochs=25):
-    batch_size = 40
+    batch_size = 30
     since = time.time()
     dataloders, dataset_sizes = loadData(batch_size)
-    iterNum = int(80/batch_size)
+    iterNum = 1#int(80/batch_size)
     best_model_wts = model.state_dict()
     best_auc = 0.0
     lossList = []
     aucList = {'train': [], 'val': []}
     lastAUC = 0
-    earlyStopNum = 10
+    earlyStopNum = 5
     earlyStopCount = earlyStopNum
 
     for epoch in range(num_epochs):
@@ -162,9 +163,9 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
             if phase == 'train': lossList.append(epoch_loss)
             aucList[phase].append(epoch_auc)
 
-            print('{} Loss: {:.4f} AUC: {:.4f}'.format(
+            print('{} Loss: {:.8f} AUC: {:.8f}'.format(
                 phase, epoch_loss, epoch_auc))
-            logging.info('{} Loss: {:.4f} AUC: {:.4f}'.format(
+            logging.info('{} Loss: {:.8f} AUC: {:.8f}'.format(
                 phase, epoch_loss, epoch_auc))
                  
 
@@ -172,6 +173,9 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
             if phase == 'val' and epoch_auc > best_auc:
                 best_auc = epoch_auc
                 best_model_wts = model.state_dict()
+                saveInfo(model, lossList, aucList)
+           
+
         
         #early stopping
         if lastAUC >= epoch_auc:
@@ -190,10 +194,10 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
-    print('Best val AUC: {:4f}'.format(best_auc))
+    print('Best val AUC: {:8f}'.format(best_auc))
     logging.info('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
-    logging.info('Best val AUC: {:4f}'.format(best_auc))
+    logging.info('Best val AUC: {:8f}'.format(best_auc))
     # load best model weights
     model.load_state_dict(best_model_wts)
     return model, lossList, aucList
@@ -202,27 +206,54 @@ class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
         self.model_ft = models.alexnet(pretrained=True)
+        self.model_ft = nn.Sequential(*list(self.model_ft.features.children())[:-1])
         for param in self.model_ft.parameters():
             param.requires_gead = False
 
         self.transition = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=1, padding=1, stride=1, bias=False),
-            nn.AvgPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1, stride=1, bias=False),
+            #nn.AvgPool2d(kernel_size=2, stride=2),
         )
         self.globalPool = nn.Sequential(
-            nn.MaxPool2d(16)
+            nn.MaxPool2d(63)
         )
         self.prediction = nn.Sequential(
             nn.Linear(256, 14)
         )
     
     def forward(self, x):
-        x = self.model_ft.features(x)#256x31x31
+        x = self.model_ft(x)#256x31x31
         x = self.transition(x)#256x16x16
         x = self.globalPool(x)#246x1x1
         x = x.view(x.size(0), -1)#256
         x = self.prediction(x)#14
         return x
+
+
+def saveInfo(model, lossList, aucList):
+    #save model
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    torch.save(model.state_dict(), os.path.join(save_dir, "alexnet_2.pth"))
+
+    #plot learning curve
+    if not os.path.exists(statistic_dir):
+        os.makedirs(statistic_dir)
+    fig = plt.figure()
+    plt.subplot(211)
+    plt.suptitle("training loss")
+    plt.plot(lossList, label='loss', color='blue')
+    plt.legend()
+    plt.ylabel("loss")
+    plt.xlabel("iter")
+    plt.subplot(212)
+    plt.suptitle("auc")
+    plt.plot(aucList['train'], label='auc_train', color='red')
+    plt.plot(aucList['val'], label='auc_val', color='green')
+    plt.ylabel("auc")
+    plt.xlabel("iter")
+    plt.legend()
+    fig.savefig(os.path.join(statistic_dir, "alexnet_2.png"))
 
 
 
@@ -234,30 +265,6 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer,step_size=7, gamma=0.1)
 
-    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 10)
-    
-    #save model
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    torch.save(model.state_dict(), os.path.join(save_dir, "alexnet.pth"))
-
-    #plot learning curve
-    if not os.path.exists(statistic_dir):
-        os.makedirs(statistic_dir)
-    fig = plt.figure()
-    plt.plot(lossList, label='loss', color='blue')
-    plt.legend()
-    plt.suptitle("loss")
-    fig.savefig(os.path.join(statistic_dir, "alexnetloss.png"))
-    plt.clf()
-    plt.plot(aucList['train'], label='auc_train', color='red')
-    plt.plot(aucList['val'], label='auc_val', color='green')
-    plt.legend()
-    plt.suptitle("auc")
-    fig.savefig(os.path.join(statistic_dir, "alexnetauc.png"))
-    plt.clf()
-    plt.imshow(plt.imread(os.path.join(statistic_dir, "alexnetloss.png")))
-    plt.show()
-    plt.imshow(plt.imread(os.path.join(statistic_dir, "alexnetauc.png")))
-    plt.show()
+    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 20)
+    saveInfo(model, lossList, aucList)    
 

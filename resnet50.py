@@ -71,7 +71,7 @@ def loadData(batch_size):
     return dataloders, dataset_sizes
 
 def train_model(model, optimizer, scheduler, num_epochs=25):
-    batch_size = 2 
+    batch_size = 4 
     since = time.time()
     dataloders, dataset_sizes = loadData(batch_size)
     iter_size = int(80/batch_size)
@@ -248,7 +248,7 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=1e-5)
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer,step_size=7, gamma=0.1)
 
-    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 3)
+    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 25)
     
     #save model
     if not os.path.exists(save_dir):
