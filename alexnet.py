@@ -2,48 +2,32 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import roc_auc_score
-from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import pandas as pd
 import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-import cv2
 from torch.utils.data import Dataset, DataLoader
+import cv2
 import torch.utils.model_zoo as model_zoo
 import time
 import os
-import logging
 
 
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
 save_dir = "./savedModels"
-log_dir = "./log"
-statistic_dir = "./statistic"
 label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
 
-if not os.path.exists(log_dir):
-    os.makedirs(log_dir)
-logging.basicConfig(filename=os.path.join(log_dir, "alxnetlog_2.log"), filemode='w', level=logging.INFO, format='%(message)s')
 
 class CXRDataset(Dataset):
-    """Face Landmarks dataset."""
 
     def __init__(self, csv_file, root_dir, transform = None):
-        """
-        Args:
-            csv_file (string): Path to the csv file with annotations.
-            root_dir (string): Directory with all the images.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
         self.labels_csv = pd.read_csv(csv_file, header=0)
         self.root_dir = root_dir
         self.transform = transform
         self.classes = pd.read_csv(csv_file, header=None,nrows=1).ix[0, :].as_matrix()
+        self.classes = self.classes[1:]
 
     def __len__(self):
         return len(self.labels_csv)
@@ -62,46 +46,39 @@ class CXRDataset(Dataset):
 def loadData(batch_size):
     trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
     image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['train', 'val']}
-    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
+    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=6)
                   for x in ['train', 'val']}
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
     print('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
-    logging.info('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
 
     class_names = image_datasets['train'].classes
-    return dataloders, dataset_sizes
+    return dataloders, dataset_sizes, class_names
 
-def train_model(model, optimizer, scheduler, num_epochs=25):
-    batch_size = 30
+def train_model(model, optimizer, num_epochs=25):
+    batch_size = 90
     since = time.time()
-    dataloders, dataset_sizes = loadData(batch_size)
-    iterNum = 1#int(80/batch_size)
+    dataloders, dataset_sizes, class_names = loadData(batch_size)
     best_model_wts = model.state_dict()
-    best_auc = 0.0
-    lossList = []
-    aucList = {'train': [], 'val': []}
-    lastAUC = 0
+    best_auc = []
+    best_auc_ave = 0
     earlyStopNum = 5
     earlyStopCount = earlyStopNum
 
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
-        logging.info('Epoch {}/{}'.format(epoch, num_epochs - 1))
-        logging.info('-' * 10)
 
 
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
             if phase == 'train':
-                scheduler.step()
                 model.train(True)  # Set model to training mode
             else:
                 model.train(False)  # Set model to evaluate mode
 
             running_loss = 0.0
-            running_auc = 0.0
-            totalAUCCount = 0
+            outputList = []
+            labelList = []
 
             # Iterate over data.
             for data in dataloders[phase]:
@@ -130,77 +107,65 @@ def train_model(model, optimizer, scheduler, num_epochs=25):
                 else:
                     inputs, labels = Variable(inputs), Variable(labels)
                 
-                if phase == 'train': tmpIter = iterNum
-                else: tmpIter = 1
-                for i in range(tmpIter):                
 
-                    # zero the parameter gradients
-                    optimizer.zero_grad()
+                # zero the parameter gradients
+                optimizer.zero_grad()
 
-                    # forward
-                    outputs = model(inputs)
-                    out_data = outputs.data
-                    criterion = nn.BCEWithLogitsLoss(weight=weight)
-                    loss = criterion(outputs, labels)
+                # forward
+                outputs = model(inputs)
+                out_data = outputs.data
+                criterion = nn.BCEWithLogitsLoss(weight=weight)
+                loss = criterion(outputs, labels)
 
-                    # backward + optimize only if in training phase
-                    if phase == 'train':
-                        loss.backward()
-                        optimizer.step()
+                # backward + optimize only if in training phase
+                if phase == 'train':
+                    loss.backward()
+                    optimizer.step()
 
                 # statistics
                 running_loss += loss.data[0]
                 labels = labels.data.cpu().numpy()
                 out_data = out_data.cpu().numpy()
                 for i in range(out_data.shape[0]):
-                    try:
-                        running_auc += roc_auc_score(labels[i], out_data[i])
-                        totalAUCCount +=1
-                    except: pass
+                    outputList.append(out_data[i].tolist())
+                    labelList.append(labels[i].tolist())
+                
 
+            #labelList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+            #outputList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
             epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_auc = running_auc / totalAUCCount
-            if phase == 'train': lossList.append(epoch_loss)
-            aucList[phase].append(epoch_auc)
+            epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
+            epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
 
-            print('{} Loss: {:.8f} AUC: {:.8f}'.format(
-                phase, epoch_loss, epoch_auc))
-            logging.info('{} Loss: {:.8f} AUC: {:.8f}'.format(
-                phase, epoch_loss, epoch_auc))
-                 
+            print('{} Loss: {:.4f} AUC: {:.4f}'.format(
+                phase, epoch_loss, epoch_auc_ave, epoch_auc))
+            print()
+            for i, c in enumerate(class_names):
+                print('{}: {:.4f} '.format(c, epoch_auc[i]))
+            print()
 
             # deep copy the model
-            if phase == 'val' and epoch_auc > best_auc:
+            if phase == 'val' and epoch_auc_ave > best_auc_ave:
                 best_auc = epoch_auc
+                best_auc_ave = epoch_auc_ave
                 best_model_wts = model.state_dict()
-                saveInfo(model, lossList, aucList)
+                saveInfo(model)
            
 
-        
-        #early stopping
-        if lastAUC >= epoch_auc:
-            earlyStopCount -= 1
-            if earlyStopCount == 0:
-                print('Early stoped at epoch {}'.format(epoch))
-                logging.info('Early stoped at epoch {}'.format(epoch))
-                break
-        else:
-            earlyStopCount = earlyStopNum
-
-
         print()
-        logging.info("")
+
 
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(
         time_elapsed // 60, time_elapsed % 60))
-    print('Best val AUC: {:8f}'.format(best_auc))
-    logging.info('Training complete in {:.0f}m {:.0f}s'.format(
-        time_elapsed // 60, time_elapsed % 60))
-    logging.info('Best val AUC: {:8f}'.format(best_auc))
+    print('Best val AUC: {:4f}'.format(best_auc_ave))
+    print()
+    for i, c in enumerate(class_names):
+        print('{}: {:.4f} '.format(c, epoch_auc[i]))
+
     # load best model weights
     model.load_state_dict(best_model_wts)
-    return model, lossList, aucList
+    return model
 
 class Model(nn.Module):
     def __init__(self):
@@ -208,14 +173,14 @@ class Model(nn.Module):
         self.model_ft = models.alexnet(pretrained=True)
         self.model_ft = nn.Sequential(*list(self.model_ft.features.children())[:-1])
         for param in self.model_ft.parameters():
-            param.requires_gead = False
+            param.requires_grad = False
 
         self.transition = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, padding=1, stride=1, bias=False),
-            #nn.AvgPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(256, 256, kernel_size=3, padding=2, stride=1, bias=False),
+            nn.AvgPool2d(kernel_size=2, stride=2),
         )
         self.globalPool = nn.Sequential(
-            nn.MaxPool2d(63)
+            nn.MaxPool2d(32)
         )
         self.prediction = nn.Sequential(
             nn.Linear(256, 14)
@@ -230,31 +195,11 @@ class Model(nn.Module):
         return x
 
 
-def saveInfo(model, lossList, aucList):
+def saveInfo(model):
     #save model
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    torch.save(model.state_dict(), os.path.join(save_dir, "alexnet_2.pth"))
-
-    #plot learning curve
-    if not os.path.exists(statistic_dir):
-        os.makedirs(statistic_dir)
-    fig = plt.figure()
-    plt.subplot(211)
-    plt.suptitle("training loss")
-    plt.plot(lossList, label='loss', color='blue')
-    plt.legend()
-    plt.ylabel("loss")
-    plt.xlabel("iter")
-    plt.subplot(212)
-    plt.suptitle("auc")
-    plt.plot(aucList['train'], label='auc_train', color='red')
-    plt.plot(aucList['val'], label='auc_val', color='green')
-    plt.ylabel("auc")
-    plt.xlabel("iter")
-    plt.legend()
-    fig.savefig(os.path.join(statistic_dir, "alexnet_2.png"))
-
+    torch.save(model.state_dict(), os.path.join(save_dir, "alexnet.pth"))
 
 
 if __name__ == '__main__':
@@ -262,9 +207,12 @@ if __name__ == '__main__':
     if use_gpu:
         model = model.cuda()
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer,step_size=7, gamma=0.1)
+    optimizer = optim.Adam([
+            {'params':model.transition.parameters()},
+            {'params':model.globalPool.parameters()},
+            {'params':model.prediction.parameters()}],
+            lr=1e-3)
 
-    model, lossList, aucList = train_model(model, optimizer, exp_lr_scheduler, num_epochs = 20)
-    saveInfo(model, lossList, aucList)    
+    model = train_model(model, optimizer, num_epochs = 15)
+    saveInfo(model)    
 
