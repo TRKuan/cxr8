@@ -8,10 +8,12 @@ import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
 from torch.utils.data import Dataset, DataLoader
-import cv2
+#import cv2
 import torch.utils.model_zoo as model_zoo
 import time
 import os
+
+from PIL import Image
 
 
 use_gpu = torch.cuda.is_available
@@ -34,7 +36,9 @@ class CXRDataset(Dataset):
 
     def __getitem__(self, idx):
         img_name = os.path.join(self.root_dir, self.labels_csv.ix[idx, 0])
-        image = cv2.imread(img_name)
+        #image = cv2.imread(img_name)
+        image = Image.open(img_name).convert('RGB')
+
         if self.transform:
             image = self.transform(image)
         label = self.labels_csv.ix[idx, 1:].as_matrix().astype('float')
@@ -44,9 +48,9 @@ class CXRDataset(Dataset):
         return sample
 
 def loadData(batch_size):
-    trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
+    trans = torchvision.transforms.Compose([transforms.Resize(224), torchvision.transforms.ToTensor()])
     image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['train', 'val']}
-    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=6)
+    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=4)
                   for x in ['train', 'val']}
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
     print('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
@@ -55,7 +59,7 @@ def loadData(batch_size):
     return dataloders, dataset_sizes, class_names
 
 def test_model(model):
-    batch_size = 40 
+    batch_size = 500 
     since = time.time()
     dataloders, dataset_sizes, class_names = loadData(batch_size)
 
@@ -88,13 +92,13 @@ def test_model(model):
             labelList.append(labels[i].tolist())
         num = num + 1
         if(num%20 == 0):
-            print('{:.2f}%\r'.format(100*num/len(dataloders['val'])))
+            print('{:.2f}%'.format(100*num/len(dataloders['val'])))
 
     print()
     #labelList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
     #outputList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-    for i in range(min(50, len(outputList))):
-        print('{} output: {}\nlabel: {}\n---------------'.format(i, outputList[i], labelList[i]))
+    for i in range(min(30, len(outputList))):
+        print('{} output: {}\nlabel: {}\n---------------'.format(i, ['{:.2f}'.format(item) for item in outputList[i]], labelList[i]))
                 
     epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
     epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
@@ -104,6 +108,7 @@ def test_model(model):
     for i, c in enumerate(class_names):
         print('{}: {:.4f} '.format(c, epoch_auc[i]))
     print()
+
 
 class Vgg(nn.Module):
     def __init__(self):
@@ -163,10 +168,14 @@ class Alexnet(nn.Module):
 
 
 if __name__ == '__main__':
-    model = Alexnet()
-    model.load_state_dict(torch.load(os.path.join(save_dir, "alexnet.pth")))
+    model = models.alexnet(pretrained=True)
+    model.classifier = nn.Sequential(
+        nn.Linear(256*6*6, 14),
+        nn.Sigmoid()
+    )
     if use_gpu:
         model = model.cuda()
-
-    model = test_model(model)
+        model = torch.nn.DataParallel(model).cuda()
+    model.load_state_dict(torch.load(os.path.join(save_dir, "alexnet_v2.pth"))) 
+    model = test_model(model.cuda())
 
