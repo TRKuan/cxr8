@@ -2,43 +2,32 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import roc_auc_score
-from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import pandas as pd
 import numpy as np
 import torchvision
 from torchvision import datasets, models, transforms
-import matplotlib.pyplot as plt
-import cv2
 from torch.utils.data import Dataset, DataLoader
+import cv2
 import torch.utils.model_zoo as model_zoo
 import time
 import os
-import logging
 
 
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
 save_dir = "./savedModels"
-log_dir = "./log"
-statistic_dir = "./statistic"
 label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
 
+
 class CXRDataset(Dataset):
-    """Face Landmarks dataset."""
 
     def __init__(self, csv_file, root_dir, transform = None):
-        """
-        Args:
-            csv_file (string): Path to the csv file with annotations.
-            root_dir (string): Directory with all the images.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
         self.labels_csv = pd.read_csv(csv_file, header=0)
         self.root_dir = root_dir
         self.transform = transform
         self.classes = pd.read_csv(csv_file, header=None,nrows=1).ix[0, :].as_matrix()
+        self.classes = self.classes[1:]
 
     def __len__(self):
         return len(self.labels_csv)
@@ -56,139 +45,128 @@ class CXRDataset(Dataset):
 
 def loadData(batch_size):
     trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
-    image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['val']}
-    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
-                  for x in ['val']}
-    dataset_sizes = {x: len(image_datasets[x]) for x in ['val']}
+    image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['train', 'val']}
+    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=6)
+                  for x in ['train', 'val']}
+    dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
+    print('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
 
-    return dataloders, dataset_sizes
+    class_names = image_datasets['train'].classes
+    return dataloders, dataset_sizes, class_names
 
 def test_model(model):
-    batch_size = 1 
+    batch_size = 40 
     since = time.time()
-    dataloders, dataset_sizes = loadData(batch_size)
-    iterNum = int(80/batch_size)
-    best_model_wts = model.state_dict()
-    best_auc = 0.0
-    lossList = []
-    aucList = {'train': [], 'val': []}
-    lastAUC = 0
-
-    for epoch in range(1):
+    dataloders, dataset_sizes, class_names = loadData(batch_size)
 
 
-        # Each epoch has a training and validation phase
-        for phase in ['val']:
+    model.train(False)  # Set model to evaluate mode
 
+    outputList = []
+    labelList = []
+    num=0
+    # Iterate over data.
+    for data in dataloders['val']:
+        # get the inputs
+        inputs = data['image']
+        labels = data['label']
 
-            # Iterate over data.
-            for data in dataloders[phase]:
-                # get the inputs
-                inputs = data['image']
-                labels = data['label']
-
-                #wrap them in Variable
-                if use_gpu:
-                    inputs = Variable(inputs.cuda())
-                    labels = Variable(labels.cuda())
-                else:
-                    inputs, labels = Variable(inputs), Variable(labels)
+        #wrap them in Variable
+        if use_gpu:
+            inputs = Variable(inputs.cuda())
+            labels = Variable(labels.cuda())
+        else:
+            inputs, labels = Variable(inputs), Variable(labels)
                 
+        outputs = model(inputs)
+        out_data = outputs.data
 
-                # forward
-                outputs, trans_out = model(inputs)
-                labels = labels.data.cpu().numpy()[0]
-                trans_out = trans_out.data.cpu().numpy()[0].transpose(1, 2, 0)
-                for layer in model.modules():
-                    if isinstance(layer, nn.Linear):
-                         pred_weight=layer.weight.data.cpu().numpy().transpose(1, 0)
+        labels = labels.data.cpu().numpy()
+        out_data = out_data.cpu().numpy()
+        for i in range(out_data.shape[0]):
+            outputList.append(out_data[i].tolist())
+            labelList.append(labels[i].tolist())
+        num = num + 1
+        if(num%20 == 0):
+            print('{:.2f}%\r'.format(100*num/len(dataloders['val'])))
 
-                heatmap = np.matmul(trans_out, pred_weight)
-                for i in range(14):
-                    if labels[i] == 1:
-                        image = heatmap.transpose(2, 0, 1)[i]
-                        image *= 255
-                        print(labels)
-                        plt.imshow(image)
-                        plt.show()
+    print()
+    #labelList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+    #outputList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
+    for i in range(min(50, len(outputList))):
+        print('{} output: {}\nlabel: {}\n---------------'.format(i, outputList[i], labelList[i]))
+                
+    epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
+    epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
 
-                '''
-                # statistics
-                running_loss += loss.data[0]
-                labels = labels.data.cpu().numpy()
-                out_data = out_data.cpu().numpy()
-                for i in range(out_data.shape[0]):
-                    try:
-                        running_auc += roc_auc_score(labels[i], out_data[i])
-                        totalAUCCount +=1
-                    except: pass
+    print('AUC: {:.4f}'.format(epoch_auc_ave))
+    print()
+    for i, c in enumerate(class_names):
+        print('{}: {:.4f} '.format(c, epoch_auc[i]))
+    print()
 
-                epoch_loss = running_loss / dataset_sizes[phase]
-                epoch_auc = running_auc / totalAUCCount
-                if phase == 'train': lossList.append(epoch_loss)
-                aucList[phase].append(epoch_auc)
-                '''
-                 
-    return model, lossList, aucList
-
-class Model(nn.Module):
+class Vgg(nn.Module):
     def __init__(self):
-        super(Model, self).__init__()
-        self.model_ft = models.alexnet(pretrained=True)
+        super(Vgg, self).__init__()
+        self.model_ft = models.vgg16(pretrained=True)
         self.model_ft = nn.Sequential(*list(self.model_ft.features.children())[:-1])
         for param in self.model_ft.parameters():
-            param.requires_gead = False
+            param.requires_grad = False
 
         self.transition = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, padding=1, stride=1, bias=False),
-            #nn.AvgPool2d(kernel_size=2, stride=2),
-        )
-        self.globalPool = nn.Sequential(
-            nn.MaxPool2d(63)
-        )
-        self.prediction = nn.Sequential(
-            nn.Linear(256, 14)
-        )
- 
-    def forward(self, x):
-        x = self.model_ft(x)#256x31x31
-        out_trans = self.transition(x)#256x16x16
-        out = self.globalPool(out_trans)#246x1x1
-        out = out.view(out.size(0), -1)#256
-        out = self.prediction(out)#14
-        return out, out_trans
-
-class Model_1(nn.Module):
-    def __init__(self):
-        super(Model_1, self).__init__()
-        self.model_ft = models.alexnet(pretrained=True)
-        for param in self.model_ft.parameters():
-            param.requires_gead = False
-
-        self.transition = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=1, padding=1, stride=1, bias=False),
+            nn.Conv2d(512, 512, kernel_size=3, padding=1, stride=1, bias=False),
             nn.AvgPool2d(kernel_size=2, stride=2),
         )
         self.globalPool = nn.Sequential(
-            nn.MaxPool2d(16)
+            nn.MaxPool2d(32)
         )
         self.prediction = nn.Sequential(
-            nn.Linear(256, 14)
+            nn.Linear(512, 14),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        x = self.model_ft(x)#512x64x64
+        x = self.transition(x)#512x32x32
+        x = self.globalPool(x)#512x1x1
+        x = x.view(x.size(0), -1)#512
+        x = self.prediction(x)#14
+        return x
+
+class Alexnet(nn.Module):
+    def __init__(self):
+        super(Alexnet, self).__init__()
+        self.model_ft = models.alexnet(pretrained=True)
+        self.model_ft = nn.Sequential(*list(self.model_ft.features.children())[:-1])
+        for param in self.model_ft.parameters():
+            param.requires_grad = False
+
+        self.transition = nn.Sequential(
+            nn.Conv2d(256, 256, kernel_size=3, padding=2, stride=1, bias=False),
+            nn.AvgPool2d(kernel_size=2, stride=2),
+        )
+        self.globalPool = nn.Sequential(
+            nn.MaxPool2d(32)
+        )
+        self.prediction = nn.Sequential(
+            nn.Linear(256, 14),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
-        x = self.model_ft.features(x)#256x31x31
-        out_tran = self.transition(x)#256x16x16
-        x = self.globalPool(out_tran)#246x1x1
+        x = self.model_ft(x)#256x64x64
+        x = self.transition(x)#256x32x32
+        x = self.globalPool(x)#256x1x1
         x = x.view(x.size(0), -1)#256
         x = self.prediction(x)#14
-        return x, out_tran
+        return x
 
 
 if __name__ == '__main__':
-    model = Model_1()
+    model = Alexnet()
     model.load_state_dict(torch.load(os.path.join(save_dir, "alexnet.pth")))
     if use_gpu:
         model = model.cuda()
-    test_model(model)
+
+    model = test_model(model)
 
