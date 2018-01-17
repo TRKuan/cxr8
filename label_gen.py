@@ -34,7 +34,7 @@ if __name__ == '__main__':
                     writer_val = csv.writer(wf_val)
                     writer_test = csv.writer(wf_test)
                     lines = f.read().splitlines()
-                    #lines = lines[0:50]
+                    #lines = lines[0:1000]#test with small data
                     del lines[0]
                     col = [
                             'FileName',
