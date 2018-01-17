@@ -43,7 +43,7 @@ class CXRDataset(Dataset):
         return sample
 
 def loadData(batch_size):
-    trans = transforms.Compose([transforms.Resize(224), transforms.ToTensor()])
+    trans = transforms.Compose([transforms.ToTensor()])
     image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['train', 'val']}
     dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=4)
                   for x in ['train', 'val']}
@@ -53,8 +53,21 @@ def loadData(batch_size):
     class_names = image_datasets['train'].classes
     return dataloders, dataset_sizes, class_names
 
-def train_model(model, optimizer, num_epochs=25):
-    batch_size = 40
+
+def weighted_BCELoss(output, target, weights=None):
+        
+    if weights is not None:
+        assert len(weights) == 2
+        
+        loss = -weights[0] * (target * torch.log(output)) - weights[1] * ((1 - target) * torch.log(1 - output))
+    else:
+        loss = -target * torch.log(output) - (1 - target) * torch.log(1 - output)
+
+    return torch.sum(loss)
+
+
+def train_model(model, optimizer, num_epochs=10):
+    batch_size = 24
     since = time.time()
     dataloders, dataset_sizes, class_names = loadData(batch_size)
     best_model_wts = model.state_dict()
@@ -92,19 +105,26 @@ def train_model(model, optimizer, num_epochs=25):
                         if int(v) == 1: N += 1
                         else: P += 1
                 try:
-                    BP = (P + N)/P
-                    BN = (P + N)/N
-                    weight = BP/BN
-                except:
-                    weight = 1.0
-                weight = torch.FloatTensor([weight]).cuda()
+                    if P != 0:
+                        BP = (P + N)/P
+                    else:
+                        BP = 100000
+                    if N!= 0:
+                        BN = (P + N)/N
+                    else:
+                        BN = 100000
+                    weights = [BP, BN]
+                    if use_gpu:
+                        weights = torch.FloatTensor(weights).cuda()
+                except: weights = None
                 #wrap them in Variable
                 if use_gpu:
-                    inputs = Variable(inputs.cuda())
-                    labels = Variable(labels.cuda())
+                    inputs = inputs.cuda()
+                    labels = labels.cuda()
+                if phase == 'train':
+                    inputs, labels = Variable(inputs, volatile=False), Variable(labels, volatile=False)
                 else:
-                    inputs, labels = Variable(inputs), Variable(labels)
-                
+                    inputs, labels = Variable(inputs, volatile=True), Variable(labels, volatile=True)
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
@@ -112,8 +132,7 @@ def train_model(model, optimizer, num_epochs=25):
                 # forward
                 outputs = model(inputs)
                 out_data = outputs.data
-                criterion = nn.BCELoss(weight=weight)
-                loss = criterion(outputs, labels)
+                loss = weighted_BCELoss(outputs, labels, weights=weights)
 
                 # backward + optimize only if in training phase
                 if phase == 'train':
@@ -129,16 +148,14 @@ def train_model(model, optimizer, num_epochs=25):
                     labelList.append(labels[i].tolist())
                 
                 logLoss += loss.data[0]
-                if(idx%(2000/batch_size)==0):
-                    try: iterAuc =  roc_auc_score(np.array(labelList[-2000:]),
-                                                  np.array(outputList[-2000:]))
-                    except: iterAuc = 0
-                    print('{} {:.2f}% Loss: {:.4f} AUC: {:.4f}'.format(phase, 100*idx/len(dataloders[phase]), logLoss/((2000/batch_size)*len(data)), iterAuc))
+                if idx%100==0 and idx!=0:
+                    try: iterAuc =  roc_auc_score(np.array(labelList[-100*batch_size:]),
+                                                  np.array(outputList[-100*batch_size:]))
+                    except: iterAuc = -1
+                    print('{} {:.2f}% Loss: {:.4f} AUC: {:.4f}'.format(phase, 100*idx/len(dataloders[phase]), logLoss/(100*batch_size), iterAuc))
                     logLoss = 0
 
 
-            #labelList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
-            #outputList.append([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
             epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
@@ -173,34 +190,7 @@ def train_model(model, optimizer, num_epochs=25):
     model.load_state_dict(best_model_wts)
     return model
 
-class Model(nn.Module):
-    def __init__(self):
-        super(Model, self).__init__()
-        self.model_ft = models.alexnet(pretrained=True)
-        self.model_ft = nn.Sequential(*list(self.model_ft.features.children())[:-1])
-        for param in self.model_ft.parameters():
-            param.requires_grad = False
 
-        self.transition = nn.Sequential(
-            nn.Conv2d(256, 256, kernel_size=3, padding=2, stride=1, bias=False),
-            nn.AvgPool2d(kernel_size=2, stride=2),
-        )
-        self.globalPool = nn.Sequential(
-            nn.MaxPool2d(32)
-        )
-        self.prediction = nn.Sequential(
-            nn.Linear(256, 14),
-            nn.Sigmoid()
-        )
-    
-    def forward(self, x):
-        x = self.model_ft(x)#256x64x64
-        x = self.transition(x)#256x32x32
-        x = self.globalPool(x)#256x1x1
-        x = x.view(x.size(0), -1)#256
-        x = self.prediction(x)#14
-        return x
-'''
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
@@ -210,7 +200,6 @@ class Model(nn.Module):
 
         self.transition = nn.Sequential(
             nn.Conv2d(2048, 2048, kernel_size=3, padding=1, stride=1, bias=False),
-            #nn.AvgPool2d(kernel_size=2, stride=2),
         )
         self.globalPool = nn.Sequential(
             nn.MaxPool2d(32)
@@ -237,40 +226,27 @@ class Model(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.prediction(x)#14
         return x
-'''   
+   
 
 def saveInfo(model):
     #save model
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    torch.save(model.state_dict(), os.path.join(save_dir, "vgg_v2.pth"))
+    torch.save(model.state_dict(), os.path.join(save_dir, "resnet50.pth"))
 
 
 if __name__ == '__main__':
-    try:
-        model = models.vgg16(pretrained=True)
-        model.classifier = nn.Sequential(
-            nn.Linear(512*7*7, 14),
-            nn.Sigmoid()
-        )
-        #model.load_state_dict(torch.load(os.path.join(save_dir, "alexnet.pth")))
-        #print('using previous model')
-    except:pass
-        #model = Model()
-
-    #optimizer = optim.Adam([
-    #        {'params':model.transition.parameters()},
-    #        {'params':model.globalPool.parameters()},
-    #        {'params':model.prediction.parameters()}],
-    #        lr=1e-3)
-
-    optimizer = optim.Adam(model.classifier.parameters(), 3e-4)
+    model = Model()
+    optimizer = optim.Adam([
+            {'params':model.transition.parameters()},
+            {'params':model.globalPool.parameters()},
+            {'params':model.prediction.parameters()}],
+            lr=3e-5)
 
     if use_gpu:
         model = model.cuda()
-        model = torch.nn.DataParallel(model).cuda()
+        #model = torch.nn.DataParallel(model).cuda()
 
-
-    model = train_model(model, optimizer, num_epochs = 10)
+    model = train_model(model, optimizer, num_epochs = 5)
     saveInfo(model)    
 
