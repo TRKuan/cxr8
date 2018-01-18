@@ -102,8 +102,8 @@ def train_model(model, optimizer, num_epochs=10):
                 N = 0
                 for label in labels:
                     for v in label:
-                        if int(v) == 1: N += 1
-                        else: P += 1
+                        if int(v) == 1: P += 1
+                        else: N += 1
                 try:
                     if P != 0:
                         BP = (P + N)/P
