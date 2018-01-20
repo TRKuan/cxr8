@@ -85,7 +85,7 @@ if __name__ == '__main__':
                         for i in range(patient['num']):
                             out.append([])
                             out[i].append(patient['file_name_list'][i])
-                            out[i].append(patient['label_list'][i])
+                            out[i] += patient['label_list'][i]
                         if len(train_list) < line_number*0.7:
                             train_list += out
                         elif len(val_list) < line_number*0.1:
