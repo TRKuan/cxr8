@@ -55,10 +55,11 @@ def loadData(batch_size):
 
 
 def weighted_BCELoss(output, target, weights=None):
-        
+
+    output = output.clamp(min=1e-5, max=1-1e-5)
     if weights is not None:
         assert len(weights) == 2
-        
+
         loss = -weights[0] * (target * torch.log(output)) - weights[1] * ((1 - target) * torch.log(1 - output))
     else:
         loss = -target * torch.log(output) - (1 - target) * torch.log(1 - output)
@@ -104,19 +105,13 @@ def train_model(model, optimizer, num_epochs=10):
                     for v in label:
                         if int(v) == 1: P += 1
                         else: N += 1
-                try:
-                    if P != 0:
-                        BP = (P + N)/P
-                    else:
-                        BP = 100000
-                    if N!= 0:
-                        BN = (P + N)/N
-                    else:
-                        BN = 100000
+                if P!=0 and N!=0:
+                    BP = (P + N)/P
+                    BN = (P + N)/N
                     weights = [BP, BN]
                     if use_gpu:
                         weights = torch.FloatTensor(weights).cuda()
-                except: weights = None
+                else: weights = None
                 #wrap them in Variable
                 if use_gpu:
                     inputs = inputs.cuda()
@@ -146,7 +141,7 @@ def train_model(model, optimizer, num_epochs=10):
                 for i in range(out_data.shape[0]):
                     outputList.append(out_data[i].tolist())
                     labelList.append(labels[i].tolist())
-                
+
                 logLoss += loss.data[0]
                 if idx%100==0 and idx!=0:
                     try: iterAuc =  roc_auc_score(np.array(labelList[-100*batch_size:]),
@@ -173,7 +168,7 @@ def train_model(model, optimizer, num_epochs=10):
                 best_auc_ave = epoch_auc_ave
                 best_model_wts = model.state_dict()
                 saveInfo(model)
-           
+
 
         print()
 
@@ -226,7 +221,7 @@ class Model(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.prediction(x)#14
         return x
-   
+
 
 def saveInfo(model):
     #save model
@@ -247,6 +242,8 @@ if __name__ == '__main__':
         model = model.cuda()
         #model = torch.nn.DataParallel(model).cuda()
 
+    #model.load_state_dict(torch.load(os.path.join(save_dir, "resnet50.pth")))
+
     model = train_model(model, optimizer, num_epochs = 5)
-    saveInfo(model)    
+    saveInfo(model)
 
