@@ -30,6 +30,7 @@ if __name__ == '__main__':
         with open(dist_path_train, "w+", newline='') as wf_train:
             with open(dist_path_val, "w+", newline='') as wf_val:
                 with open(dist_path_test, "w+", newline='') as wf_test:
+                    #read in the lines
                     writer_train = csv.writer(wf_train)
                     writer_val = csv.writer(wf_val)
                     writer_test = csv.writer(wf_test)
@@ -46,23 +47,63 @@ if __name__ == '__main__':
                     writer_train.writerow(col)
                     writer_val.writerow(col)
                     writer_test.writerow(col)
-                    random.shuffle(lines)
                     line_number = len(lines)
+
+                    #parse the file and generate a list fo patients
+                    patients = []
                     for i in range(line_number):
                         split = lines[i].split(',')
                         file_name = split[0]
+                        patient_id = int(split[3])-1
                         label_string = split[1]
                         labels = label_string.split('|')
                         vector = [0 for _ in range(14)]
                         for label in labels:
                             if label != "No Finding":
                                 vector[disease_categories[label]] = 1
-                        vector.insert(0, file_name)
-                        if i <= line_number*0.7:
-                            writer_train.writerow(vector)#70%
-                        elif i > line_number*0.7 and i <= line_number*0.8:
-                            writer_val.writerow(vector)#10%
-                        else :
-                            writer_test.writerow(vector)#20%
+                        if len(patients) >= patient_id+1:
+                            patients[patient_id]['file_name_list'].append(file_name)
+                            patients[patient_id]['label_list'].append(vector)
+                            patients[patient_id]['num'] += 1
+                        else:
+                            file_name_list = [file_name]
+                            label_list = [vector]
+                            num = 1
+                            patients.append({
+                                'file_name_list': file_name_list,
+                                'label_list': label_list,
+                                'num': num
+                            })
+
+                    #random generate labels
+                    random.shuffle(patients)
+                    train_list = []
+                    val_list = []
+                    test_list = []
+                    for patient in patients:
+                        out = []
+                        for i in range(patient['num']):
+                            out.append([])
+                            out[i].append(patient['file_name_list'][i])
+                            out[i].append(patient['label_list'][i])
+                        if len(train_list) < line_number*0.7:
+                            train_list += out
+                        elif len(val_list) < line_number*0.1:
+                            val_list += out
+                        else:
+                            test_list += out
+
+                    random.shuffle(train_list)
+                    random.shuffle(val_list)
+                    random.shuffle(test_list)
+
+                    #save in files
+                    for out in train_list:
+                        writer_train.writerow(out)
+                    for out in val_list:
+                        writer_val.writerow(out)
+                    for out in test_list:
+                        writer_test.writerow(out)
     print("Label data generated")
-                    
+    print("Train: {}\nValidation: {}\nTest: {}".format(len(train_list), len(val_list), len(test_list)))
+
