@@ -90,12 +90,17 @@ def test_model(model):
             labelList.append(labels[i].tolist())
         
         if idx%20 == 0 and idx!=0:
-            print('{:.2f}%'.format(100*idx/len(dataloders['val'])), end='\r')
+            print('\r{:.2f}%'.format(100*idx/len(dataloders['val'])), end='')    
+    print()
 
     print('Sample outputs-----------------')
-    base = random.randint(0, dataset_sizes['val']-min(30, len(outputList)))
-    for i in range(min(30, len(outputList))):
-        print('{} output: {}\nlabel: {}\n---------------'.format(i+base, ['{:.4f}'.format(item) for item in outputList[i+base]], labelList[i+base]))
+    rand_list = []
+    while len(rand_list) < 30:
+        rand = random.randint(0, dataset_sizes['val'])
+        if rand not in rand_list:
+            rand_list.append(rand)
+    for i in rand_list:
+        print('{} output: {}\nlabel: {}\n---------------'.format(i, ['{:.4f}'.format(item) for item in outputList[i]], labelList[i]))
                 
     epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
     epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
