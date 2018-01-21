@@ -2,14 +2,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.autograd import Variable
-import torchvision
-from torchvision import datasets, models, transforms
 from torch.utils.data import Dataset, DataLoader
-import torch.utils.model_zoo as model_zoo
+from torchvision import models, transforms
 from sklearn.metrics import roc_auc_score
 import pandas as pd
-import numpy as np
 from PIL import Image
+import numpy as np
 import time
 import os
 
@@ -17,7 +15,7 @@ import os
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
 save_dir = "./savedModels"
-label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
+label_path = {'train': "./Train_Label.csv", 'val': "./Val_Label.csv", 'test': "Test_Label.csv"}
 
 class CXRDataset(Dataset):
 
@@ -45,7 +43,7 @@ class CXRDataset(Dataset):
 def loadData(batch_size):
     trans = transforms.Compose([transforms.ToTensor()])
     image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['train', 'val']}
-    dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=4)
+    dataloders = {x: DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
                   for x in ['train', 'val']}
     dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
     print('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
