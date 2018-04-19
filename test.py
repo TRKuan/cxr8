@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import roc_auc_score, roc_curve
 from torch.autograd import Variable
 import pandas as pd
 import numpy as np
@@ -13,13 +13,12 @@ import time
 import os
 import random
 from PIL import Image
-
+import matplotlib.pyplot as plt
 
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
 save_dir = "./savedModels"
 label_path = {'train':"./Train_Label.csv", 'val':"./Val_Label.csv", 'test':"Test_Label.csv"}
-
 
 class CXRDataset(Dataset):
 
@@ -104,12 +103,21 @@ def test_model(model):
                 
     epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
     epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
+    
 
     print('AUC: {:.4f}'.format(epoch_auc_ave))
     print()
+    plt.figure()
     for i, c in enumerate(class_names):
+        fpr, tpr, _ = roc_curve(np.array(labelList)[:, i], np.array(outputList)[:, i])
+        plt.plot(fpr, tpr, label=c)
         print('{}: {:.4f} '.format(c, epoch_auc[i]))
     print()
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC Curve')
+    plt.legend(loc="lower right")
+    plt.show()
 
 class Model(nn.Module):
     def __init__(self):
