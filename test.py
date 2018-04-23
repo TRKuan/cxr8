@@ -14,6 +14,7 @@ import os
 import random
 from PIL import Image
 import matplotlib.pyplot as plt
+import cv2
 
 use_gpu = torch.cuda.is_available
 data_dir = "./images"
@@ -46,13 +47,13 @@ class CXRDataset(Dataset):
 
 def loadData(batch_size):
     trans = torchvision.transforms.Compose([torchvision.transforms.ToTensor()])
-    image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['val']}
+    image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['test']}
     dataloders = {x: torch.utils.data.DataLoader(image_datasets[x], batch_size=batch_size, shuffle=False, num_workers=4)
-                  for x in ['val']}
-    dataset_sizes = {x: len(image_datasets[x]) for x in ['val']}
-    print('Validation data: {}'.format(dataset_sizes['val']))
+                  for x in ['test']}
+    dataset_sizes = {x: len(image_datasets[x]) for x in ['test']}
+    print('Testing data: {}'.format(dataset_sizes['test']))
 
-    class_names = image_datasets['val'].classes
+    class_names = image_datasets['test'].classes
     return dataloders, dataset_sizes, class_names
 
 def test_model(model):
@@ -67,7 +68,7 @@ def test_model(model):
     labelList = []
     num=0
     # Iterate over data.
-    for idx, data in enumerate(dataloders['val']):
+    for idx, data in enumerate(dataloders['test']):
         # get the inputs
         inputs = data['image']
         labels = data['label']
@@ -89,18 +90,24 @@ def test_model(model):
             labelList.append(labels[i].tolist())
         
         if idx%20 == 0 and idx!=0:
-            print('\r{:.2f}%'.format(100*idx/len(dataloders['val'])), end='')    
+            print('\r{:.2f}%'.format(100*idx/len(dataloders['test'])), end='')    
     print()
-
+    '''
+    plt.figure()
+    heatmap = heatmap.data.cpu().numpy()[:, :, 1]
+    heatmap = cv2.resize(heatmap, dsize=(1024, 1024), interpolation=cv2.INTER_CUBIC)
+    plt.imshow(heatmap)
+    plt.show()
+    '''
     print('Sample outputs-----------------')
     rand_list = []
     while len(rand_list) < 30:
-        rand = random.randint(0, dataset_sizes['val'])
+        rand = random.randint(0, dataset_sizes['test'])
         if rand not in rand_list:
             rand_list.append(rand)
     for i in rand_list:
         print('{} output: {}\nlabel: {}\n---------------'.format(i, ['{:.4f}'.format(item) for item in outputList[i]], labelList[i]))
-                
+    
     epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
     epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
     
@@ -118,7 +125,8 @@ def test_model(model):
     plt.title('ROC Curve')
     plt.legend(loc="lower right")
     plt.show()
-
+    
+    
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
@@ -150,10 +158,13 @@ class Model(nn.Module):
 
 
         x = self.transition(x)
+        active = x
         x = self.globalPool(x)
         x = x.view(x.size(0), -1)
         x = self.prediction(x)#14
-        return x
+        #for name, p in self.prediction.named_parameters():
+        #    if name == '0.weight': weight = p
+        return x#, torch.matmul(active.view(2048, 32, 32).permute(1, 2, 0), weight.permute(1, 0))
 
 
 if __name__ == '__main__':
