@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 import csv
+import random
 
-source_dir = './dataset/Data_Entry_2017.csv'
-dist_dir = './dataset/label_index.csv'
+data_entry_dir = './dataset/Data_Entry_2017.csv'
+index_dist_dir = './dataset/label_index.csv'
+train_val_list_dir = './dataset/train_val_list.txt'
+train_list_dir = './dataset/train_list.txt'
+val_list_dir = './dataset/val_list.txt'
 
 disease_categories = {
         'Atelectasis': 0,
@@ -40,8 +44,9 @@ dist_scv_col = [
 ]
 
 if __name__ == '__main__':
-    with open(source_dir) as f:
-        with open(dist_dir, 'w+', newline='') as wf:
+    # Generate label index csv file
+    with open(data_entry_dir) as f:
+        with open(index_dist_dir, 'w+', newline='') as wf:
             #read in the lines
             writer = csv.writer(wf)
             lines = f.read().splitlines()
@@ -65,4 +70,19 @@ if __name__ == '__main__':
                 output += vector
                 writer.writerow(output)
 
-    print("Label index generated at '%s'"%(dist_dir))
+    print("Label index generated at '%s'"%(index_dist_dir))
+    
+    # Split training list and  validation list
+    with open(train_val_list_dir) as f:
+        with open(train_list_dir, 'w+') as wf_t:
+            with open(val_list_dir, 'w+') as wf_v:
+                image_name_list = f.read().split('\n')
+                random.shuffle(image_name_list)
+                for i in range(len(image_name_list)):
+                    if i < len(image_name_list)*(7/8):
+                        wf_t.write(image_name_list[i]+'\n')
+                    else:
+                        wf_v.write(image_name_list[i]+'\n')
+
+    print("Training list generated at '%s'"%(train_list_dir))
+    print("Validation list generated at '%s'"%(val_list_dir))
