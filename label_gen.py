@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import csv
-import random
 
 source_dir = './dataset/Data_Entry_2017.csv'
 dist_dir = './dataset/label_index.csv'
