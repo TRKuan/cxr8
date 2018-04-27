@@ -1,6 +1,5 @@
-images/*
+dataset/images/*
 log/*
-statistic/*
 savedModels/*
 nohup.out
 
