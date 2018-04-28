@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 import csv
+import os
 import random
 
-data_entry_dir = './dataset/Data_Entry_2017.csv'
-index_dist_dir = './dataset/label_index.csv'
-train_val_list_dir = './dataset/train_val_list.txt'
-train_list_dir = './dataset/train_list.txt'
-val_list_dir = './dataset/val_list.txt'
+dataset_dir = './dataset'
 
 disease_categories = {
         'Atelectasis': 0,
@@ -25,7 +22,7 @@ disease_categories = {
         'Hernia': 13,
         }
 
-dist_scv_col = [
+dist_csv_col = [
     'FileName',
     'Atelectasis',
     'Cardiomegaly',
@@ -44,40 +41,13 @@ dist_scv_col = [
 ]
 
 if __name__ == '__main__':
-    # Generate label index csv file
-    with open(data_entry_dir) as f:
-        with open(index_dist_dir, 'w+', newline='') as wf:
-            #read in the lines
-            writer = csv.writer(wf)
-            lines = f.read().splitlines()
-            del lines[0]
-            writer.writerow(dist_scv_col)
-            line_number = len(lines)
-
-            #parse the file
-            for i in range(line_number):
-                split = lines[i].split(',')
-                file_name = split[0]
-                patient_id = int(split[3])-1
-                label_string = split[1]
-                labels = label_string.split('|')
-                vector = [0 for _ in range(14)]
-                for label in labels:
-                    if label != "No Finding":
-                        vector[disease_categories[label]] = 1
-                output = []
-                output.append(file_name)
-                output += vector
-                writer.writerow(output)
-
-    print("Label index generated at '%s'"%(index_dist_dir))
-    
     # Split training list and  validation list
+    
     train_list = []
     val_list = []
-    with open(train_val_list_dir) as f:
-        with open(train_list_dir, 'w+') as wf_t:
-            with open(val_list_dir, 'w+') as wf_v:
+    with open(os.path.join(dataset_dir, 'train_val_list.txt')) as f:
+        with open(os.path.join(dataset_dir, 'train_list.txt'), 'w+') as wf_t:
+            with open(os.path.join(dataset_dir, 'val_list.txt'), 'w+') as wf_v:
                 image_name_list = f.read().split('\n')
                 
                 # group the same patients together to guaranty no patient overlap between splits
@@ -116,5 +86,54 @@ if __name__ == '__main__':
                     wf_v.write(data+'\n')
                 wf_v.write(val_list[-1])
 
-    print("Training list generated at '%s'"%(train_list_dir))
-    print("Validation list generated at '%s'"%(val_list_dir))
+    print('Training list generated')
+    print('Validation list generated')
+    
+    
+    # Generate label index csv file
+    
+    f_de = open(os.path.join(dataset_dir, 'Data_Entry_2017.csv'))
+    dataset_type = ['train', 'val', 'test']
+    f = {t:open(os.path.join(dataset_dir, t+'_list.txt')) for t in dataset_type}
+    wf = {t:open(os.path.join(dataset_dir, t+'_label.csv'), 'w+', newline='') for t in dataset_type}
+    writer = {t:csv.writer(wf[t]) for t in dataset_type}
+    # write header
+    for t in dataset_type:
+        writer[t].writerow(dist_csv_col)
+    
+    # read
+    lines_de = f_de.read().splitlines()
+    del lines_de[0]
+    image_name_list = {t:f[t].read().split('\n') for t in dataset_type}
+
+    #parse the file
+    pos = {t:0 for t in dataset_type}
+    for i in range(len(lines_de)):
+        split = lines_de[i].split(',')
+        file_name = split[0]
+        patient_id = int(split[3])-1
+        label_string = split[1]
+        labels = label_string.split('|')
+        vector = [0 for _ in range(14)]
+        for label in labels:
+            if label != "No Finding":
+                vector[disease_categories[label]] = 1
+        output = []
+        output.append(file_name)
+        output += vector
+        
+        # write to train, val, or test
+        for t in dataset_type:
+            if pos[t] >= len(image_name_list[t]):
+                continue
+            if file_name == image_name_list[t][pos[t]]:
+                writer[t].writerow(output)
+                pos[t] += 1
+    
+    f_de.close()
+    for t in dataset_type:
+        f[t].close()
+        wf[t].close()
+
+    print('Label index generated')
+    
