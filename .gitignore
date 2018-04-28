@@ -2,4 +2,6 @@ dataset/images/*
 log/*
 savedModels/*
 nohup.out
+.ipynb_checkpoints/*
+__pycache__/*
 
