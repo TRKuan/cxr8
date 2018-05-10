@@ -45,12 +45,12 @@ class CXRDataset(Dataset):
         image = Image.open(img_dir).convert('L')
         if self.transform:
             image = self.transform(image)
-        label = self.label_index.iloc[idx, 1:].as_matrix().astype('int')
+        label = self.label_index.iloc[idx, 1:9].as_matrix().astype('int')
         
         # bbox
-        bbox = np.zeros([14, 1024, 1024])
+        bbox = np.zeros([8, 1024, 1024])
         bbox_valid = np.zeros(14)
-        for i in range(14):
+        for i in range(8):
             if label[i] == 0:
                bbox_valid[i] = 1
         
@@ -86,13 +86,13 @@ class CXRDataset_BBox_only(Dataset):
         image = Image.open(img_dir).convert('L')
         if self.transform:
             image = self.transform(image)
-        label = self.label_index.loc[self.label_index['FileName']==name].iloc[0, 1:].as_matrix().astype('int')
+        label = self.label_index.loc[self.label_index['FileName']==name].iloc[0, 1:9].as_matrix().astype('int')
             
         
         # bbox
-        bbox = np.zeros([14, 1024, 1024])
-        bbox_valid = np.zeros(14)
-        for i in range(14):
+        bbox = np.zeros([8, 1024, 1024])
+        bbox_valid = np.zeros(8)
+        for i in range(8):
             if label[i] == 0:
                bbox_valid[i] = 1
         
