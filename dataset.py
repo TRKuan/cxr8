@@ -31,13 +31,13 @@ class CXRDataset(Dataset):
         self.image_dir = os.path.join(root_dir, 'images')
         self.transform = transform
         self.index_dir = os.path.join(root_dir, dataset_type+'_label.csv')
-        self.classes = pd.read_csv(self.index_dir, header=None,nrows=1).ix[0, :].as_matrix()[1:]
+        self.classes = pd.read_csv(self.index_dir, header=None,nrows=1).ix[0, :].as_matrix()[1:9]
         self.label_index = pd.read_csv(self.index_dir, header=0)
         self.bbox_index = pd.read_csv(os.path.join(root_dir, 'BBox_List_2017.csv'), header=0)
 
         
     def __len__(self):
-        return len(self.label_index)
+        return int(len(self.label_index)*0.1)
 
     def __getitem__(self, idx):
         name = self.label_index.iloc[idx, 0]
@@ -48,7 +48,7 @@ class CXRDataset(Dataset):
         label = self.label_index.iloc[idx, 1:9].as_matrix().astype('int')
         
         # bbox
-        bbox = np.zeros([8, 1024, 1024])
+        bbox = np.zeros([8, 512, 512])
         bbox_valid = np.zeros(14)
         for i in range(8):
             if label[i] == 0:
@@ -59,8 +59,8 @@ class CXRDataset(Dataset):
             for i in range(len(cols)):
                 bbox[
                     disease_categories[cols.iloc[i, 1]], #index
-                    int(cols.iloc[i, 3]): int(cols.iloc[i, 3]+cols.iloc[i, 5]), #y:y+h
-                    int(cols.iloc[i, 2]): int(cols.iloc[i, 2]+cols.iloc[i, 4]) #x:x+w
+                    int(cols.iloc[i, 3]/2): int(cols.iloc[i, 3]/2+cols.iloc[i, 5]/2), #y:y+h
+                    int(cols.iloc[i, 2]/2): int(cols.iloc[i, 2]/2+cols.iloc[i, 4]/2) #x:x+w
                 ] = 1
                 bbox_valid[disease_categories[cols.iloc[i, 1]]] = 1
         
@@ -73,7 +73,7 @@ class CXRDataset_BBox_only(Dataset):
         self.image_dir = os.path.join(root_dir, 'images')
         self.transform = transform
         self.index_dir = os.path.join(root_dir, 'test'+'_label.csv')
-        self.classes = pd.read_csv(self.index_dir, header=None,nrows=1).ix[0, :].as_matrix()[1:]
+        self.classes = pd.read_csv(self.index_dir, header=None,nrows=1).ix[0, :].as_matrix()[1:9]
         self.label_index = pd.read_csv(self.index_dir, header=0)
         self.bbox_index = pd.read_csv(os.path.join(root_dir, 'BBox_List_2017.csv'), header=0)
         
@@ -90,7 +90,7 @@ class CXRDataset_BBox_only(Dataset):
             
         
         # bbox
-        bbox = np.zeros([8, 1024, 1024])
+        bbox = np.zeros([8, 512, 512])
         bbox_valid = np.zeros(8)
         for i in range(8):
             if label[i] == 0:
@@ -101,8 +101,8 @@ class CXRDataset_BBox_only(Dataset):
             for i in range(len(cols)):
                 bbox[
                     disease_categories[cols.iloc[i, 1]], #index
-                    int(cols.iloc[i, 3]): int(cols.iloc[i, 3]+cols.iloc[i, 5]), #y:y+h
-                    int(cols.iloc[i, 2]): int(cols.iloc[i, 2]+cols.iloc[i, 4]) #x:x+w
+                    int(cols.iloc[i, 3]/2): int(cols.iloc[i, 3]/2+cols.iloc[i, 5]/2), #y:y+h
+                    int(cols.iloc[i, 2]/2): int(cols.iloc[i, 2]/2+cols.iloc[i, 4]/2) #x:x+w
                 ] = 1
                 bbox_valid[disease_categories[cols.iloc[i, 1]]] = 1
         
