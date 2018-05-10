@@ -1,60 +1,56 @@
+from dataset import CXRDataset, CXRDataset_BBox_only
+from model import Model
 import torch
-import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
-from torch.autograd import Variable
-from torch.utils.data import Dataset, DataLoader
-from torchvision import models, transforms
+from torch.utils.data import DataLoader
+from torchvision import transforms
 from sklearn.metrics import roc_auc_score
-import pandas as pd
-from PIL import Image
 import numpy as np
+from tensorboardX import SummaryWriter
 import time
 import os
 
+batch_size = 4
+num_epochs = 40
+learning_rate = 1e-6
+regulization = 0
+model_save_dir = './savedModels'
+model_name = 'net_v1_lr_1e-6'
+log_dir = './runs'
+data_root_dir = './dataset'
 
-use_gpu = torch.cuda.is_available
-data_dir = "./images"
-save_dir = "./savedModels"
-label_path = {'train': "./Train_Label.csv", 'val': "./Val_Label.csv", 'test': "Test_Label.csv"}
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-class CXRDataset(Dataset):
+mean = [0.50576189]
+def make_dataLoader():
+    trans = {}
+    trans['train'] = transforms.Compose([
+        transforms.Resize(512),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, [1.])
+    ])
+    trans['val'] = transforms.Compose([
+        transforms.Resize(512),
+        transforms.ToTensor(),
+        transforms.Normalize(mean, [1.])
+    ])
+    datasets = {
+        'train': CXRDataset_BBox_only(data_root_dir, transform=trans['train']),
+        'val': CXRDataset(data_root_dir, dataset_type='val', transform=trans['val'])
+    }
+    dataloaders = {x: DataLoader(datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
+                    for x in ['train', 'val']}
+    dataset_sizes = {x: len(datasets[x]) for x in ['train', 'val']}
+    class_names = datasets['train'].classes
 
-    def __init__(self, csv_file, root_dir, transform = None):
-        self.labels_csv = pd.read_csv(csv_file, header=0)
-        self.root_dir = root_dir
-        self.transform = transform
-        self.classes = pd.read_csv(csv_file, header=None,nrows=1).ix[0, :].as_matrix()
-        self.classes = self.classes[1:]
-
-    def __len__(self):
-        return len(self.labels_csv)
-
-    def __getitem__(self, idx):
-        img_name = os.path.join(self.root_dir, self.labels_csv.ix[idx, 0])
-        image = Image.open(img_name).convert('RGB')
-        if self.transform:
-            image = self.transform(image)
-        label = self.labels_csv.ix[idx, 1:].as_matrix().astype('float')
-        label = torch.from_numpy(label).type(torch.FloatTensor)
-        sample = {'image': image, 'label': label}
-
-        return sample
-
-def loadData(batch_size):
-    trans = transforms.Compose([transforms.ToTensor()])
-    image_datasets = {x: CXRDataset(label_path[x], data_dir, transform = trans)for x in ['train', 'val']}
-    dataloders = {x: DataLoader(image_datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
-                  for x in ['train', 'val']}
-    dataset_sizes = {x: len(image_datasets[x]) for x in ['train', 'val']}
-    print('Training data: {}\nValidation data: {}'.format(dataset_sizes['train'], dataset_sizes['val']))
-
-    class_names = image_datasets['train'].classes
-    return dataloders, dataset_sizes, class_names
-
+    print(dataset_sizes)
+    
+    return dataloaders, dataset_sizes, class_names
 
 def weighted_BCELoss(output, target, weights=None):
-
     output = output.clamp(min=1e-5, max=1-1e-5)
+    target = target.float()
     if weights is not None:
         assert len(weights) == 2
 
@@ -64,21 +60,24 @@ def weighted_BCELoss(output, target, weights=None):
 
     return torch.sum(loss)
 
-
-def train_model(model, optimizer, num_epochs=10):
-    batch_size = 24
+def training(model):
+    writer = {x: SummaryWriter(log_dir=os.path.join(log_dir, model_name, x),
+                comment=model_name)
+          for x in ['train', 'val']}
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=0)
+    #scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[20,30], gamma=0.1)
+    dataloaders, dataset_sizes, class_names = make_dataLoader()
+    
     since = time.time()
-    dataloders, dataset_sizes, class_names = loadData(batch_size)
     best_model_wts = model.state_dict()
     best_auc = []
-    best_auc_ave = 0
-
+    best_auc_ave = 0.0
+    iter_num = 0
 
     for epoch in range(num_epochs):
         print('Epoch {}/{}'.format(epoch, num_epochs - 1))
         print('-' * 10)
-
-
+        #scheduler.step()
         # Each epoch has a training and validation phase
         for phase in ['train', 'val']:
             if phase == 'train':
@@ -87,15 +86,22 @@ def train_model(model, optimizer, num_epochs=10):
                 model.train(False)  # Set model to evaluate mode
 
             running_loss = 0.0
-            outputList = []
-            labelList = []
-            logLoss = 0
+            output_list = []
+            label_list = []
+            
             # Iterate over data.
-            for idx, data in enumerate(dataloders[phase]):
+            for idx, data in enumerate(dataloaders[phase]):
                 # get the inputs
-                inputs = data['image']
-                labels = data['label']
+                images, labels, names, bboxes, bbox_valids = data
 
+                images = images.to(device)
+                labels = labels.to(device)
+                
+                if phase == 'train':
+                    torch.set_grad_enabled(True)
+                else:
+                    torch.set_grad_enabled(False)
+                    
                 #calculate weight for loss
                 P = 0
                 N = 0
@@ -106,53 +112,75 @@ def train_model(model, optimizer, num_epochs=10):
                 if P!=0 and N!=0:
                     BP = (P + N)/P
                     BN = (P + N)/N
-                    weights = [BP, BN]
-                    if use_gpu:
-                        weights = torch.FloatTensor(weights).cuda()
+                    weights = torch.tensor([BP, BN], dtype=torch.float).to(device)
                 else: weights = None
-                #wrap them in Variable
-                if use_gpu:
-                    inputs = inputs.cuda()
-                    labels = labels.cuda()
-                if phase == 'train':
-                    inputs, labels = Variable(inputs, volatile=False), Variable(labels, volatile=False)
-                else:
-                    inputs, labels = Variable(inputs, volatile=True), Variable(labels, volatile=True)
 
                 # zero the parameter gradients
                 optimizer.zero_grad()
 
                 # forward
-                outputs = model(inputs)
-                out_data = outputs.data
+                outputs, segs = model(images)
+                
+                # remove invalid bbox and seg
+                bbox_list = []
+                for i in range(bbox_valids.size(0)):
+                    bbox_list.append([])
+                    for j in range(8):
+                        if bbox_valids[i][j] == 1:
+                            bbox_list[i].append(bboxes[i][j])
+                    bbox_list[i] = torch.stack(bbox_list[i]).to(device)
+                
+                seg_list = []
+                for i in range(bbox_valids.size(0)):
+                    seg_list.append([])
+                    for j in range(8):
+                        if bbox_valids[i][j] == 1:
+                            seg_list[i].append(segs[i][j])
+                    seg_list[i] = torch.stack(seg_list[i]).to(device)
+                
+                # classification loss
                 loss = weighted_BCELoss(outputs, labels, weights=weights)
+                # segmentation loss
+                for i in range(len(seg_list)):
+                    loss += 5*weighted_BCELoss(seg_list[i], bbox_list[i], weights=torch.tensor([10., 1.]).to(device))/(512*512)
 
                 # backward + optimize only if in training phase
                 if phase == 'train':
                     loss.backward()
                     optimizer.step()
+                    iter_num += 1
 
                 # statistics
-                running_loss += loss.data[0]
-                labels = labels.data.cpu().numpy()
-                out_data = out_data.cpu().numpy()
-                for i in range(out_data.shape[0]):
-                    outputList.append(out_data[i].tolist())
-                    labelList.append(labels[i].tolist())
-
-                logLoss += loss.data[0]
-                if idx%100==0 and idx!=0:
-                    try: iterAuc =  roc_auc_score(np.array(labelList[-100*batch_size:]),
-                                                  np.array(outputList[-100*batch_size:]))
-                    except: iterAuc = -1
-                    print('{} {:.2f}% Loss: {:.4f} AUC: {:.4f}'.format(phase, 100*idx/len(dataloders[phase]), logLoss/(100*batch_size), iterAuc))
-                    logLoss = 0
-
+                running_loss += loss.item()
+                outputs = outputs.detach().to('cpu').numpy()
+                labels = labels.detach().to('cpu').numpy()
+                for i in range(outputs.shape[0]):
+                    output_list.append(outputs[i].tolist())
+                    label_list.append(labels[i].tolist())
+                    
+                if idx%10 == 0:
+                    if phase == 'train':
+                        writer[phase].add_scalar('loss', loss.item()/outputs.shape[0], iter_num)
+                    print('\r{} {:.2f}%'.format(phase, 100*idx/len(dataloaders[phase])), end='\r')
+                if idx%100 == 0:
+                    if phase == 'train':
+                        try:
+                            auc = roc_auc_score(np.array(label_list[-100*batch_size:]), np.array(output_list[-100*batch_size:]))
+                            writer[phase].add_scalar('auc', auc, iter_num)
+                        except:
+                            pass
 
             epoch_loss = running_loss / dataset_sizes[phase]
-            epoch_auc_ave = roc_auc_score(np.array(labelList), np.array(outputList))
-            epoch_auc = roc_auc_score(np.array(labelList), np.array(outputList), average=None)
+            try:
+                epoch_auc_ave = roc_auc_score(np.array(label_list), np.array(output_list))
+                epoch_auc = roc_auc_score(np.array(label_list), np.array(output_list), average=None)
+            except:
+                epoch_auc_ave = 0
+                epoch_auc = [0 for _ in range(8)]
 
+            if phase == 'val':
+                writer[phase].add_scalar('loss', epoch_loss, iter_num)
+                writer[phase].add_scalar('auc', epoch_auc_ave, iter_num)
             print('{} Loss: {:.4f} AUC: {:.4f}'.format(
                 phase, epoch_loss, epoch_auc_ave, epoch_auc))
             print()
@@ -160,16 +188,18 @@ def train_model(model, optimizer, num_epochs=10):
                 print('{}: {:.4f} '.format(c, epoch_auc[i]))
             print()
 
-            # deep copy the model
+            # save model
             if phase == 'val' and epoch_auc_ave > best_auc_ave:
                 best_auc = epoch_auc
                 best_auc_ave = epoch_auc_ave
                 best_model_wts = model.state_dict()
-                saveInfo(model)
-
+                model_dir = os.path.join(model_save_dir, model_name+'.pth')
+                if not os.path.exists(model_save_dir):
+                    os.makedirs(model_save_dir)
+                torch.save(model.state_dict(), model_dir)
+                print('Model saved to %s'%(model_dir))
 
         print()
-
 
     time_elapsed = time.time() - since
     print('Training complete in {:.0f}m {:.0f}s'.format(
@@ -177,71 +207,13 @@ def train_model(model, optimizer, num_epochs=10):
     print('Best val AUC: {:4f}'.format(best_auc_ave))
     print()
     for i, c in enumerate(class_names):
-        print('{}: {:.4f} '.format(c, epoch_auc[i]))
+        print('{}: {:.4f} '.format(c, best_auc[i]))
 
     # load best model weights
     model.load_state_dict(best_model_wts)
+    
     return model
 
-
-class Model(nn.Module):
-    def __init__(self):
-        super(Model, self).__init__()
-        self.model_ft = models.resnet50(pretrained=True)
-        for param in self.model_ft.parameters():
-            param.requires_grad = False
-
-        self.transition = nn.Sequential(
-            nn.Conv2d(2048, 2048, kernel_size=3, padding=1, stride=1, bias=False),
-        )
-        self.globalPool = nn.Sequential(
-            nn.MaxPool2d(32)
-        )
-        self.prediction = nn.Sequential(
-            nn.Linear(2048, 14),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        x = self.model_ft.conv1(x)
-        x = self.model_ft.bn1(x)
-        x = self.model_ft.relu(x)
-        x = self.model_ft.maxpool(x)
-
-        x = self.model_ft.layer1(x)
-        x = self.model_ft.layer2(x)
-        x = self.model_ft.layer3(x)
-        x = self.model_ft.layer4(x)
-
-
-        x = self.transition(x)
-        x = self.globalPool(x)
-        x = x.view(x.size(0), -1)
-        x = self.prediction(x)#14
-        return x
-
-
-def saveInfo(model):
-    #save model
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    torch.save(model.state_dict(), os.path.join(save_dir, "resnet50.pth"))
-
-
 if __name__ == '__main__':
-    model = Model()
-    optimizer = optim.Adam([
-            {'params':model.transition.parameters()},
-            {'params':model.globalPool.parameters()},
-            {'params':model.prediction.parameters()}],
-            lr=3e-5)
-
-    if use_gpu:
-        model = model.cuda()
-        #model = torch.nn.DataParallel(model).cuda()
-
-    #model.load_state_dict(torch.load(os.path.join(save_dir, "resnet50.pth")))
-
-    model = train_model(model, optimizer, num_epochs = 5)
-    saveInfo(model)
-
+    model = Model().to(device)
+    training(model)
