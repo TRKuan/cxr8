@@ -5,3 +5,6 @@ nohup.out
 .ipynb_checkpoints/*
 __pycache__/*
 
+Training.ipynb
+runs/*
+
