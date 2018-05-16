@@ -1,6 +1,7 @@
 # Chest X-Ray
 
 Detect common thoracic diseases from chest X-ray images.
+We are still working on it.
 
 ### Setup
 1. Setup [pytorch](http://pytorch.org/)(0.4.0) enviroment.
