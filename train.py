@@ -12,11 +12,11 @@ import time
 import os
 
 batch_size = 4
-num_epochs = 40
+num_epochs = 100
 learning_rate = 1e-6
 regulization = 0
 model_save_dir = './savedModels'
-model_name = 'net_v1_lr_1e-6'
+model_name = 'net_v1_lr_1e-6_bbox_data_arg'
 log_dir = './runs'
 data_root_dir = './dataset'
 
@@ -36,7 +36,7 @@ def make_dataLoader():
         transforms.Normalize(mean, [1.])
     ])
     datasets = {
-        'train': CXRDataset_BBox_only(data_root_dir, transform=trans['train']),
+        'train': CXRDataset_BBox_only(data_root_dir, transform=trans['train'], data_arg=True),
         'val': CXRDataset(data_root_dir, dataset_type='val', transform=trans['val'])
     }
     dataloaders = {x: DataLoader(datasets[x], batch_size=batch_size, shuffle=True, num_workers=4)
@@ -121,7 +121,7 @@ def training(model):
                 # forward
                 outputs, segs = model(images)
                 
-                # remove invalid bbox and seg
+                # remove invalid bbox and segmentation outputs
                 bbox_list = []
                 for i in range(bbox_valids.size(0)):
                     bbox_list.append([])
@@ -150,7 +150,7 @@ def training(model):
                     optimizer.step()
                     iter_num += 1
 
-                # statistics
+                # metrix
                 running_loss += loss.item()
                 outputs = outputs.detach().to('cpu').numpy()
                 labels = labels.detach().to('cpu').numpy()
@@ -162,7 +162,7 @@ def training(model):
                     if phase == 'train':
                         writer[phase].add_scalar('loss', loss.item()/outputs.shape[0], iter_num)
                     print('\r{} {:.2f}%'.format(phase, 100*idx/len(dataloaders[phase])), end='\r')
-                if idx%100 == 0:
+                if idx%100 == 0 and idx!=0:
                     if phase == 'train':
                         try:
                             auc = roc_auc_score(np.array(label_list[-100*batch_size:]), np.array(output_list[-100*batch_size:]))
@@ -176,17 +176,22 @@ def training(model):
                 epoch_auc = roc_auc_score(np.array(label_list), np.array(output_list), average=None)
             except:
                 epoch_auc_ave = 0
-                epoch_auc = [0 for _ in range(8)]
+                epoch_auc = [0 for _ in range(len(class_names))]
 
             if phase == 'val':
                 writer[phase].add_scalar('loss', epoch_loss, iter_num)
                 writer[phase].add_scalar('auc', epoch_auc_ave, iter_num)
-            print('{} Loss: {:.4f} AUC: {:.4f}'.format(
-                phase, epoch_loss, epoch_auc_ave, epoch_auc))
-            print()
             for i, c in enumerate(class_names):
-                print('{}: {:.4f} '.format(c, epoch_auc[i]))
-            print()
+                writer[phase].add_pr_curve(c, np.array(label_list[:][i]), np.array(output_list[:][i]), iter_num)
+            
+            log_str = ''
+            log_str += '{} Loss: {:.4f} AUC: {:.4f}  \n\n'.format(
+                phase, epoch_loss, epoch_auc_ave, epoch_auc)
+            for i, c in enumerate(class_names):
+                log_str += '{}: {:.4f}  \n'.format(c, epoch_auc[i])
+            log_str += '\n'
+            print(log_str)
+            writer[phase].add_text('log',log_str , iter_num)
 
             # save model
             if phase == 'val' and epoch_auc_ave > best_auc_ave:
@@ -198,6 +203,7 @@ def training(model):
                     os.makedirs(model_save_dir)
                 torch.save(model.state_dict(), model_dir)
                 print('Model saved to %s'%(model_dir))
+                writer[phase].add_text('log','Model saved to %s\n\n'%(model_dir) , iter_num)
 
         print()
 
